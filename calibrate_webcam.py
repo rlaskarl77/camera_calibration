@@ -31,6 +31,8 @@ def calibrate_webcam(board: dict, board_params: dict) -> None:
     
     mtx = board_params["mtx"]
     dist = board_params["dist"]
+    rvec = board_params["rvec"]
+    tvec = board_params["tvec"]
     mtx = np.asarray(mtx, dtype=np.float32)
     dist = np.asarray(dist, dtype=np.float32)
 
@@ -53,16 +55,19 @@ def calibrate_webcam(board: dict, board_params: dict) -> None:
             print("no markers are detected")
         else:
             ret, rvec, tvec = \
-                aruco.estimatePoseBoard(corners, ids, aruco_board, newcameramtx, dist)
+                aruco.estimatePoseBoard(corners, ids, aruco_board, newcameramtx, dist, rvec, tvec)
             print(f"rotation: {rvec}\ntraslation: {tvec}")
+            
             if ret != 0:
                 img_aruco = aruco.drawDetectedMarkers(img, corners, ids, (0,255,0))
-                img_aruco = aruco.drawAxis(img_aruco, newcameramtx, dist, rvec, tvec, 8)
-
-            if cv2.waitKey(0) & 0xFF == ord('q'):
-                break
+                img_aruco = cv2.drawFrameAxes(img_aruco, newcameramtx, dist, rvec, tvec, 8)
+                print("result drawn")
+                
         cv2.imshow("World co-ordinate frame axes", img_aruco)
 
+        if cv2.waitKey(1) & 0xFF== 27:
+            break
+            
     cv2.destroyAllWindows()
 
 
@@ -81,7 +86,7 @@ def load_calibration_results(intr_path: str, extr_path: str) -> dict:
     
     extrinsic_file = cv2.FileStorage(extr_path, cv2.FILE_STORAGE_READ)
     rvec = extrinsic_file.getNode("rvec").mat()
-    tvec = extrinsic_file.write("tvec").mat()
+    tvec = extrinsic_file.getNode("tvec").mat()
     
     board_params["rvec"] = rvec
     board_params["tvec"] = tvec
