@@ -1,0 +1,22 @@
+# image and board data
+data/
+!data/siteA
+!data/siteB
+
+# calibration results
+result/
+!result/siteA
+!result/siteB
+
+# sample image files
+*.png
+!result.png
+
+# test file
+test.py
+
+# test scripts and results
+scripts/
+test/
+samples/
+calib/
