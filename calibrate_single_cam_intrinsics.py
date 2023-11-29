@@ -11,10 +11,12 @@ from cv2 import aruco
 
 
 ROOT = Path(__file__).parent.absolute()
-DATA_PATH = ROOT.joinpath("data")
-SAVE_PATH = ROOT.joinpath("result")
+DATA_PATH = ROOT.joinpath("data_single")
+SAVE_PATH = ROOT.joinpath("result_single")
 
 IMAGE_FORMATS = ('.jpg', '.jpeg', '.JPG', '.png', '.PNG')
+
+USE_CHARUCO = True
 
 
 def calibrate_camera(site_dict: dict, draw_results: bool) -> None:
@@ -23,7 +25,7 @@ def calibrate_camera(site_dict: dict, draw_results: bool) -> None:
     points = board["points"]
     board_ids = np.array(board["ids"])
     
-    # print(board)
+    print(board)
     
     aruco_dict = aruco.getPredefinedDictionary(aruco.DICT_4X4_1000)
     aruco_params = aruco.DetectorParameters_create()
@@ -33,87 +35,78 @@ def calibrate_camera(site_dict: dict, draw_results: bool) -> None:
     site_path = os.path.join(SAVE_PATH, site_dict["site"])
     os.makedirs(site_path, exist_ok=True)
     
-    # if draw_results:
-    #     draw_board_image(site_path, aruco_board)
+    if draw_results:
+        draw_board_image(site_path, aruco_board)
     
     cameras = site_dict["cameras"]
     
     for camera_dict in cameras:
+        
         print(camera_dict["camera"])
         
-        if camera_dict["camera"]!='ch12_m':
-            continue
+        image_paths = camera_dict["image_paths"]
+        counter, corner_list, id_list = [], None, None
         
-        try:
-            if True:
-                image_paths = camera_dict["image_paths"]
-                counter, corner_list, id_list = [], None, None
-                
-                # for image_path in tqdm(image_paths[::3000]):
-                for image_path in image_paths:
-                    
-                    img = cv2.imread(image_path)
-                    img_gray = cv2.cvtColor(img,cv2.COLOR_RGB2GRAY)
-                    # print(img_gray.shape)
-                    
-                    corners, ids, rejectedImgPoints = \
-                        aruco.detectMarkers(img_gray, aruco_dict, parameters=aruco_params)
-                    
-                    if ids is None or corners is None:
-                        continue
-                    
-                    if 17 in ids:
-                        img_result = img.copy()
-                        
-                    if corner_list is None:
-                        corner_list = corners
-                    else:
-                        corner_list = np.vstack((corner_list, corners))
-                    
-                    # ids = np.intersect1d(ids, board_ids)
-                    # print(ids)
-                    
-                    if id_list is None:
-                        id_list = ids 
-                    else:
-                        id_list = np.vstack((id_list, ids))
-                    
-                    counter.append(len(ids))
-                
-                assert id_list is not None and len(id_list)>0, \
-                    'at least one markers need to be detected'
-                counter = np.array(counter)
-                    
-                assert len(corner_list)>0, \
-                    f'no markers are detected in camera {camera_dict["camera"]}'
-                    
-                ret, mtx, dist, rvecs, tvecs = aruco.calibrateCameraAruco(
-                    corners=corner_list, 
-                    ids=id_list, 
-                    counter=counter, 
-                    board=aruco_board, 
-                    imageSize=img_gray.shape[::-1], 
-                    cameraMatrix=None, 
-                    distCoeffs=None)
-                    
-                    # objPoints = aruco_board.objPoints
-                    # print(objPoints)
-                    # objIds = aruco_board.ids
-                    
-                    # ret, mtx, dist, rvecs, tvecs = cv2.calibrateCamera(
-                    #     cl, il, c, aruco_board, img_gray.shape, None, None)
-                
-                camera_path = os.path.join(site_path, camera_dict["camera"])
-                os.makedirs(camera_path, exist_ok=True)
-                
-                save_calibration_results(camera_path, mtx, dist, rvecs[0], tvecs[0])
+        for image_path in image_paths[::30000]:
             
-                if draw_results:
-                    draw_calibration_results(camera_path, img_result, corner_list, id_list, 
-                                            mtx, dist, rvecs[-1], tvecs[-1], 2)
+            img = cv2.imread(image_path)
+            img_gray = cv2.cvtColor(img,cv2.COLOR_RGB2GRAY)
+            
+            print(img_gray.shape)
+            
+            corners, ids, rejectedImgPoints = \
+                aruco.detectMarkers(img_gray, aruco_dict, parameters=aruco_params)
+            
+            if ids is None or corners is None:
+                continue
+            
+            ids, id_idxes, board_id_idxes = \
+                np.intersect1d(ids, board_ids, return_indices=True)
+            corners = corners[id_idxes]
+            
+            if id_list is None:
+                id_list = ids
+            else:
+                id_list = np.vstack((id_list, ids))
+                
+            if corner_list is None:
+                corner_list = corners
+            else:
+                corner_list = np.vstack((corner_list, corners))
+            
+            counter.append(len(ids))
         
-        except Exception as e:
-            print("exception happend with calibrating camera:", e)
+        assert id_list is not None and len(id_list)>0, \
+            'at least one markers need to be detected'
+        counter = np.array(counter)
+                
+        assert len(corner_list)>0, \
+            f'no markers are detected in camera {camera_dict["camera"]}'
+        
+        ret, mtx, dist, rvecs, tvecs = aruco.calibrateCameraAruco(
+            corners=corner_list, 
+            ids=id_list, 
+            counter=counter, 
+            board=aruco_board, 
+            imageSize=img_gray.shape[::-1], 
+            cameraMatrix=None, 
+            distCoeffs=None)
+        
+        # objPoints = aruco_board.objPoints
+        # print(objPoints)
+        # objIds = aruco_board.ids
+        
+        # ret, mtx, dist, rvecs, tvecs = cv2.calibrateCamera(
+        #     cl, il, c, aruco_board, img_gray.shape, None, None)
+    
+        camera_path = os.path.join(site_path, camera_dict["camera"])
+        os.makedirs(camera_path, exist_ok=True)
+        
+        save_calibration_results(camera_path, mtx, dist, rvecs[0], tvecs[0])
+    
+        if draw_results:
+            draw_calibration_results(camera_path, img, corner_list, id_list, 
+                                    mtx, dist, rvecs[0], tvecs[0], 2)
 
 
 def draw_board_image(site_path:str, aruco_board, 
@@ -128,29 +121,11 @@ def draw_calibration_results(camera_path: str, img: np.ndarray, corners: tuple,
                              ids: np.ndarray, mtx: np.ndarray, dist: np.ndarray, 
                              rvec: np.ndarray, tvec: np.ndarray, length: int=8) -> None:
     
-    print("printing")
-    
     img = img.copy()
-    img2 = img.copy()
     result_image = aruco.drawDetectedMarkers(img, corners, ids)
     result_image = cv2.drawFrameAxes(img, mtx, dist, rvec, tvec, length)
-    result_image_path = os.path.join(camera_path, f"result.png")
+    result_image_path = os.path.join(camera_path, f"result_{ids}.png")
     cv2.imwrite(result_image_path, result_image)
-    
-    h, w = img.shape[:2]
-    newcameramtx, roi = cv2.getOptimalNewCameraMatrix(mtx, dist, (w,h), 1, (w,h))
-    dst = cv2.undistort(img2, mtx, dist, None, newcameramtx)
-    
-    # crop the image
-    # x, y, w, h = roi
-    # dst = dst[y:y+h, x:x+w]
-    
-    undist_image_path = os.path.join(camera_path, f"undistort.png")
-    cv2.imwrite(undist_image_path, dst)
-    
-    # ori = cv2.drawFrameAxes(dst, newcameramtx, dist, rvec, tvec, 3)
-    
-    print("printed")
 
 
 def save_calibration_results(camera_path: str, mtx: np.ndarray,
@@ -204,8 +179,13 @@ def load_datas() -> List[dict]:
         board_file = os.path.join(site, "board.yaml")
         
         if not os.path.exists(board_file) or not os.path.isfile(board_file):
-            print(board_file)
-            continue
+            print(f'{board_file} does not exist or is not a file')
+            if not USE_CHARUCO:
+                continue
+            print(f'generate charuco board for {site}')
+            board = generate_charuco()
+        else:
+            board = parse_board(board_file)
         
         camera_list = [os.path.join(site, f)
                       for f in os.listdir(site)
@@ -215,7 +195,7 @@ def load_datas() -> List[dict]:
         
         site_dict = dict()
         site_dict["site"] = Path(site).stem
-        site_dict["board"] = parse_board(board_file)
+        site_dict["board"] = board
         site_dict["cameras"] = list()
         
         for camera in camera_list:
@@ -232,6 +212,23 @@ def load_datas() -> List[dict]:
         datas.append(site_dict)
     
     return datas
+
+
+def generate_charuco() -> dict:
+    aruco_dict = aruco.getPredefinedDictionary(aruco.DICT_4X4_1000)
+    
+    num_row = 8
+    num_columns = 8
+    board_width = 1. # in meter
+    board_height = 1. # in meter
+    square_length = board_width / num_row
+    marker_length = 1/8.*0.8 # in meter
+    charuco_board = aruco.CharucoBoard.create(num_columns, num_row, square_length, marker_length, aruco_dict)
+    
+    board = dict()
+    board["ids"] = np.array(charuco_board.ids).astype(np.int32)
+    board["points"] = np.stack([points for points in charuco_board.objPoints]).astype(np.float32)
+    
     
 
 def parse_arguments():

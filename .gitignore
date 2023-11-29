@@ -20,3 +20,8 @@ scripts/
 test/
 samples/
 calib/
+
+# etc
+*.png
+test_test.py
+result
