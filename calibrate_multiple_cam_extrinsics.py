@@ -21,8 +21,8 @@ SAVE_PATH = ROOT.joinpath("result_multiple")
 
 IMAGE_FORMATS = ('.jpg', '.jpeg', '.JPG', '.png', '.PNG')
 
-MAX_EPOCHS = 100
-LR = 1e-3
+MAX_EPOCHS = 1000
+LR = 1e-1
 
 
 def calibrate_camera_all(site_dict: dict, res: dict, draw_results: bool) -> None:
@@ -53,14 +53,14 @@ def calibrate_camera_all(site_dict: dict, res: dict, draw_results: bool) -> None
     all_cameras = [camera_dict["camera"] for camera_dict in cameras]
     camera_intrinsics = []
     camera_extrinsics = []
+    distortions = []
     id_indicators = []
     all_corners = []
-    all_points = points.reshape(-1, 3).transpose() # (3, 4*N)
-    all_points = np.vstack((all_points, np.ones((1, all_points.shape[1])))) # (4, 4*N)
+    all_points = points.copy() # N x 4 x 3
     
     for camera_dict, camera_res in zip(cameras, camera_results):
         
-        print(camera_dict["camera"])
+        print(camera_dict["camera"], camera_res["camera"])
         
         image_paths = camera_dict["image_paths"]
         
@@ -69,7 +69,7 @@ def calibrate_camera_all(site_dict: dict, res: dict, draw_results: bool) -> None
         dist = camera_res["distortion_coefficients"]
         
         mtx = np.array(mtx, dtype=np.float32)
-        dist = np.array(dist, dtype=np.float32).reshape(3, 1)
+        dist = np.array(dist, dtype=np.float32)
         
         # undistort image
         if undistort_images:
@@ -81,10 +81,14 @@ def calibrate_camera_all(site_dict: dict, res: dict, draw_results: bool) -> None
         counter, corner_list, id_list = [], None, None
         
         image_path = image_paths[0]
-            
-        img = cv2.imread(image_path)
-        img_undist = cv2.remap(img, mapx, mapy, cv2.INTER_LINEAR)
-        img_gray = cv2.cvtColor(img_undist,cv2.COLOR_RGB2GRAY)
+        
+        if undistort_images:
+            img = cv2.imread(image_path)
+            img_undist = cv2.remap(img, mapx, mapy, cv2.INTER_LINEAR)
+            img_gray = cv2.cvtColor(img_undist,cv2.COLOR_RGB2GRAY)
+        else:
+            img = cv2.imread(image_path)
+            img_gray = cv2.cvtColor(img,cv2.COLOR_RGB2GRAY)
         
         corners_, ids_, rejectedImgPoints = \
             aruco.detectMarkers(img_gray, aruco_dict, parameters=aruco_params)
@@ -94,12 +98,16 @@ def calibrate_camera_all(site_dict: dict, res: dict, draw_results: bool) -> None
         
         ids, id_idxes, board_id_idxes = \
             np.intersect1d(ids_, board_ids, return_indices=True)
-        corners = corners_[id_idxes]
+            
+        if len(ids)==0:
+            continue
+        
+        corners = np.array(corners_)[id_idxes]
         
         if id_list is None:
             id_list = ids
         else:
-            id_list = np.vstack((id_list, ids))
+            id_list = np.hstack((id_list, ids))
             
         if corner_list is None:
             corner_list = corners
@@ -115,6 +123,11 @@ def calibrate_camera_all(site_dict: dict, res: dict, draw_results: bool) -> None
         assert len(corner_list)>0, \
             f'no markers are detected in camera {camera_dict["camera"]}'
         
+        newdist = None
+        if not undistort_images:
+            newcameramtx = mtx
+            newdist = dist
+        
         ret, mtx, dist, rvecs, tvecs = aruco.calibrateCameraAruco(
             corners=corner_list, 
             ids=id_list, 
@@ -122,7 +135,7 @@ def calibrate_camera_all(site_dict: dict, res: dict, draw_results: bool) -> None
             board=aruco_board, 
             imageSize=img_gray.shape[::-1], 
             cameraMatrix=newcameramtx, 
-            distCoeffs=None)
+            distCoeffs=newdist)
     
         camera_path = os.path.join(site_path, camera_dict["camera"])
         os.makedirs(camera_path, exist_ok=True)
@@ -135,9 +148,12 @@ def calibrate_camera_all(site_dict: dict, res: dict, draw_results: bool) -> None
             
         
         # save parameters
+        if undistort_images:
         
-        newcameramtx = np.array(newcameramtx, dtype=np.float32)
-        camera_intrinsics.append(newcameramtx)
+            newcameramtx = np.array(newcameramtx, dtype=np.float32)
+            camera_intrinsics.append(newcameramtx)
+        else:
+            camera_intrinsics.append(mtx)
         
         rot = np.array(cv2.Rodrigues(rvecs[0])[0], dtype=np.float32)
         trs = np.array(tvecs[0], dtype=np.float32).reshape(3, 1)
@@ -145,32 +161,48 @@ def calibrate_camera_all(site_dict: dict, res: dict, draw_results: bool) -> None
         extrinsics = np.hstack((rot, trs))
         camera_extrinsics.append(extrinsics)
         
-        id_indicator = np.zeros((len(board_ids)*4,), dtype=np.int32)
+        id_indicator = np.zeros((len(board_ids), 4), dtype=np.int32) # (N, 4)
         
         for board_id_idx in board_id_idxes:
             
-            id_indicator[board_id_idx*4: board_id_idx*4+4] = 1
+            id_indicator[board_id_idx] = np.ones(4, dtype=np.int32)
             
         id_indicators.append(id_indicator)
         
-        corners_all = np.zeros((len(board_ids), 4, 2), dtype=np.float32)
+        corners_all = np.zeros((len(board_ids), 4, 2), dtype=np.float32) 
         
         for board_id_idx, corner in zip(board_id_idxes, corners):
             corners_all[board_id_idx] = corner[0]
         
-        corners_all = corners_all.reshape(-1, 2).transpose() # (2, 4*N)
+        corners_all = corners_all.transpose() # (N, 4, 2)
         all_corners.append(corners_all)
+        
+        distortions.append(dist)
         
     camera_intrinsics = np.array(camera_intrinsics, dtype=np.float32)
     camera_extrinsics = np.array(camera_extrinsics, dtype=np.float32)
-    id_indicators = np.array(id_indicators, dtype=np.int32).reshape(1, 1, -1)
-    all_corners = np.array(all_corners, dtype=np.float32)
+    id_indicators = np.array(id_indicators, dtype=np.int32) # C x N x 4
+    all_corners = np.array(all_corners, dtype=np.float32) # C x N x 4 x 2
     
-    camera_intrinsics = torch.from_numpy(camera_intrinsics) # C x 3 x 3
-    camera_extrinsics = torch.from_numpy(camera_extrinsics) # C x 3 x 4
-    id_indicators = torch.from_numpy(id_indicators) # 1 x 1 x (4 x N)
-    all_corners = torch.from_numpy(all_corners) # C x 2 x (4 x N)
-    all_points = torch.from_numpy(all_points).repeat(camera_intrinsics.shape[0], 1, 1) # C x 4 x (4 x N)
+    camera_intrinsics = torch.from_numpy(camera_intrinsics).to(torch.float32) # C x 3 x 3
+    camera_extrinsics = torch.from_numpy(camera_extrinsics).to(torch.float32) # C x 3 x 4
+    id_indicators = torch.from_numpy(id_indicators).to(torch.float32) # C x N x 4
+    all_corners = torch.from_numpy(all_corners).to(torch.float32) # C x N x 4 x 2
+    all_points = torch.from_numpy(all_points).repeat(camera_intrinsics.shape[0], 1, 1, 1).to(torch.float32) # C x N x 4 x 3
+    all_points = torch.cat((all_points, torch.ones_like(all_points[:, :, :, :1])), dim=-1) # C x N x 4 x 4
+    
+    all_points = all_points.transpose(3, 2) # C x 4 x N x 4
+    all_points = all_points.reshape(camera_intrinsics.shape[0], 4, -1) # C x 4 x (4 x N)
+    
+    all_corners = all_corners.transpose(3, 2) # C x 2 x N x 4
+    all_corners = all_corners.reshape(camera_intrinsics.shape[0], 2, -1) # C x 2 x (4 x N)
+    
+    id_indicators = id_indicators.reshape(camera_intrinsics.shape[0], -1) # C x (4 x N)
+    id_indicators = id_indicators.unsqueeze(1) # C x 1 x (4 x N)
+    
+    all_corners = all_corners * id_indicators # C x 2 x (4 x N)
+    
+    camera_extrinsics.requires_grad = True
     
     
     optimizer = optim.SGD([camera_extrinsics], lr=LR, momentum=0.9)
@@ -179,33 +211,41 @@ def calibrate_camera_all(site_dict: dict, res: dict, draw_results: bool) -> None
         
         threed2twod = torch.matmul(camera_intrinsics, camera_extrinsics)
         projected2d = torch.matmul(threed2twod, all_points) # C x 3 x (4 x N)
-        projected2d = projected2d[:, :2, :] / projected2d[:, 2:, :] # C x 2 x (4 x N)
+        projected2d = projected2d[:, :2, :] / projected2d[:, 2:, :] 
+        
         projected2d = projected2d * id_indicators # C x 2 x (4 x N)
         
-        projected2d = projected2d.reshape(-1, 2) # (C x 4 x N) x 2
-        all_corners = all_corners.reshape(-1, 2) # (C x 4 x N) x 2
-        
-        error = F.mse_loss(projected2d, all_corners, reduction='mean')
-        print("epoch",epoch,error)
+        error = F.mse_loss(projected2d, all_corners)
+        print("epoch", epoch, error.detach().numpy())
         error.backward()
         optimizer.step()
-        torch.save(camera_extrinsics, os.path.join(site_path, f"extrinsics_e{epoch}.pt"))
+        # torch.save(camera_extrinsics, os.path.join(site_path, f"extrinsics_e{epoch}.pt"))
         
-    print("final_loss",error)
+    print("final_loss", error)
     torch.save(camera_extrinsics, os.path.join(site_path, "extrinsics.pt"))
+    
+    if error>1e-2:
+        print("calibration failed")
+        return
     
     for c_idx, cam in enumerate(cameras):
         camera_path = os.path.join(site_path, cam["camera"])
         os.makedirs(camera_path, exist_ok=True)
         mtx = camera_intrinsics[c_idx].numpy()
+        camera_extrinsics = camera_extrinsics.detach()
         rvecs = camera_extrinsics[c_idx][:, :3].numpy()
+        rvecs = cv2.Rodrigues(rvecs)[0]
         tvecs = camera_extrinsics[c_idx][:, 3:].numpy()
-        save_calibration_results(camera_path, mtx, np.zeros(4), 
+        
+        dist = distortions[c_idx]
+        save_calibration_results(camera_path, mtx, dist, 
                                  rvecs, tvecs, 
                                  '_final')
         
         
-        image_paths = camera_dict["image_paths"]
+        image_paths = cam["image_paths"]
+        
+        print(f'saving {cam["camera"]} from image {image_paths[0]}')
         
         # undistort image
         if undistort_images:
@@ -217,11 +257,19 @@ def calibrate_camera_all(site_dict: dict, res: dict, draw_results: bool) -> None
         counter, corner_list, id_list = [], None, None
         
         image_path = image_paths[0]
-            
-        img = cv2.imread(image_path)
-        img_undist = cv2.remap(img, mapx, mapy, cv2.INTER_LINEAR)
-        img_gray = cv2.cvtColor(img_undist,cv2.COLOR_RGB2GRAY)
         
+        if undistort_images:
+            
+            img = cv2.imread(image_path)
+            img_undist = cv2.remap(img, mapx, mapy, cv2.INTER_LINEAR)
+            img_gray = cv2.cvtColor(img_undist,cv2.COLOR_RGB2GRAY)
+        else:
+            img = cv2.imread(image_path)
+            img_gray = cv2.cvtColor(img,cv2.COLOR_RGB2GRAY)
+        
+    
+        camera_path = os.path.join(site_path, camera_dict["camera"])
+        os.makedirs(camera_path, exist_ok=True)
         
         if draw_results:
             draw_calibration_results(camera_path, img, corner_list, id_list, 
@@ -238,13 +286,13 @@ def draw_board_image(site_path:str, aruco_board,
 
 def draw_calibration_results(camera_path: str, img: np.ndarray, corners: tuple, 
                              ids: np.ndarray, mtx: np.ndarray, dist: np.ndarray, 
-                             rvec: np.ndarray, tvec: np.ndarray, length: int=8,
+                             rvec: np.ndarray, tvec: np.ndarray, length: float=0.5,
                              tag: str='') -> None:
     
     img = img.copy()
     result_image = aruco.drawDetectedMarkers(img, corners, ids)
     result_image = cv2.drawFrameAxes(img, mtx, dist, rvec, tvec, length)
-    result_image_path = os.path.join(camera_path, f"result_{ids}{tag}.png")
+    result_image_path = os.path.join(camera_path, f"result{tag}.png")
     cv2.imwrite(result_image_path, result_image)
 
 

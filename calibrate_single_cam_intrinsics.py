@@ -47,27 +47,29 @@ def calibrate_camera(site_dict: dict, draw_results: bool) -> None:
         image_paths = camera_dict["image_paths"]
         counter, corner_list, id_list = [], None, None
         
-        for image_path in image_paths[::30000]:
+        for image_path in image_paths:
             
             img = cv2.imread(image_path)
             img_gray = cv2.cvtColor(img,cv2.COLOR_RGB2GRAY)
             
-            print(img_gray.shape)
-            
             corners, ids, rejectedImgPoints = \
                 aruco.detectMarkers(img_gray, aruco_dict, parameters=aruco_params)
             
-            if ids is None or corners is None:
+            if ids is None or corners is None or len(ids)==0:
                 continue
             
             ids, id_idxes, board_id_idxes = \
                 np.intersect1d(ids, board_ids, return_indices=True)
-            corners = corners[id_idxes]
+                
+            if len(ids)==0:
+                continue
+            
+            corners = np.array(corners)[id_idxes]
             
             if id_list is None:
                 id_list = ids
             else:
-                id_list = np.vstack((id_list, ids))
+                id_list = np.hstack((id_list, ids))
                 
             if corner_list is None:
                 corner_list = corners
@@ -75,6 +77,7 @@ def calibrate_camera(site_dict: dict, draw_results: bool) -> None:
                 corner_list = np.vstack((corner_list, corners))
             
             counter.append(len(ids))
+        
         
         assert id_list is not None and len(id_list)>0, \
             'at least one markers need to be detected'

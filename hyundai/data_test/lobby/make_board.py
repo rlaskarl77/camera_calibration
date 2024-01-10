@@ -10,8 +10,8 @@ points = []
 size = 0.53
 z = 0.
 
-x_oris = [0., 2.7, 5.4, 8.1]
-y_oris = [0., 2.25, 4.5, 6.75, 8.1]
+x_oris = [0.-4.5, 2.7-4.5, 5.4-4.5, 8.1-4.5]
+y_oris = [0.-4.5, 2.25-4.5, 4.5-4.5, 6.75-4.5, 8.1-4.5]
 
 
 ids = [61, 62, 64, 86,
@@ -56,5 +56,5 @@ board = dict()
 board["points"] = points
 board["ids"] = [id for id in ids if id is not None]
 
-with open('board.yaml', 'w') as f:
+with open('board2.yaml', 'w') as f:
     yaml.dump(board, f)
